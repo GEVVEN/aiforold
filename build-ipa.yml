@@ -1,0 +1,109 @@
+name: Build unsigned IPA
+
+# 在 GitHub 的 macOS 机器上编译出未签名的 .ipa。
+# 免费账号也能用；产物在 Actions 页面的 Artifacts 里下载。
+#
+# 拿到 ipa 之后，Windows 上用 Sideloadly / AltStore 用你自己的 Apple ID 签名安装即可，
+# 详细步骤见 docs/构建与安装.md。
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+
+jobs:
+  build-ipa:
+    runs-on: macos-14
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Xcode 15.x 仍然允许 iOS 12.0 作为部署目标；
+      # 如果这一步失败（镜像更新导致 15.4 不可用），把版本改成 'latest-stable'。
+      - name: Select Xcode 15.4
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: '15.4'
+
+      - name: Toolchain info
+        run: |
+          xcodebuild -version
+          swift --version
+          echo "--- 可用的 scheme / target ---"
+          xcodebuild -list -project AIAssistant.xcodeproj || true
+
+      - name: Verify project file matches sources
+        run: python3 tools/generate_pbxproj.py --check
+
+      - name: Static self-check (iOS 12 compatibility)
+        run: python3 tools/check_ios12.py
+
+      # 关键点：xcodebuild 不允许 -target 与 -derivedDataPath 同时出现
+      # （会报 “在指定 -derivedDataPath 时，必须使用 -scheme …”）。
+      # 所以主路径用共享 scheme；万一 scheme 丢失，自动回退到 -target + CONFIGURATION_BUILD_DIR。
+      - name: Build unsigned app
+        run: |
+          set -o pipefail
+          rm -rf build build.log
+          SIGN_ARGS=(CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" CODE_SIGN_ENTITLEMENTS="")
+
+          echo "=== 尝试 1：-scheme + -derivedDataPath ==="
+          if xcodebuild \
+               -project AIAssistant.xcodeproj \
+               -scheme AIAssistant \
+               -configuration Release \
+               -destination 'generic/platform=iOS' \
+               -derivedDataPath build \
+               "${SIGN_ARGS[@]}" \
+               build > build.log 2>&1; then
+            tail -n 60 build.log
+          else
+            echo "scheme 方式失败，日志末尾："
+            tail -n 60 build.log
+            echo "=== 尝试 2：-target + CONFIGURATION_BUILD_DIR ==="
+            xcodebuild \
+              -project AIAssistant.xcodeproj \
+              -target AIAssistant \
+              -configuration Release \
+              -sdk iphoneos \
+              CONFIGURATION_BUILD_DIR="$PWD/build/Products" \
+              "${SIGN_ARGS[@]}" \
+              build 2>&1 | tee -a build.log | tail -n 60
+          fi
+
+      - name: Package into .ipa
+        run: |
+          set -euo pipefail
+          APP_PATH="build/Build/Products/Release-iphoneos/AIAssistant.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "预期路径不存在，自动搜索 .app …"
+            # 末尾的 || true 是必须的：pipefail 下 find 被 head 提前关管道会返回非零
+            APP_PATH="$(find build -maxdepth 6 -type d -name 'AIAssistant.app' | head -n 1 || true)"
+          fi
+          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+            echo "没有找到构建产物 AIAssistant.app"
+            ls -R build/Build/Products 2>/dev/null || true
+            exit 1
+          fi
+          echo "使用产物：$APP_PATH"
+          rm -rf Payload AIAssistant-unsigned.ipa
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          zip -qry AIAssistant-unsigned.ipa Payload
+          ls -lh AIAssistant-unsigned.ipa
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AIAssistant-unsigned-ipa
+          path: AIAssistant-unsigned.ipa
+          if-no-files-found: error
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          if-no-files-found: ignore
