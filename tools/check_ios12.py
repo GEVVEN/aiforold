@@ -164,11 +164,9 @@ def check_symbols():
     l10n_text = open(l10n_path, encoding="utf-8").read()
     defined_l10n = set(re.findall(r"static let (\w+)\s*[:=]", l10n_text))
     icons_text = open(icons_path, encoding="utf-8").read()
-    enum_match = re.search(r"enum Icon[^{]*\{(.*?)\n\}", icons_text, re.S)
-    defined_icons = set(re.findall(r"\b([a-zA-Z][A-Za-z0-9_]*)\b", enum_match.group(1).split("\n")[0])) if enum_match else set()
-    if enum_match:
-        first_line = enum_match.group(1).split("\n")[0]
-        defined_icons = set(part.strip() for part in re.split(r"[,\s]+", first_line) if part.strip())
+    # case 名 + 枚举里的静态成员（Icon.draw / Icon.cache / Icon.clearCache 这类合法引用）
+    defined_icons = parse_icon_cases(icons_text)
+    defined_icons |= set(re.findall(r"static\s+(?:func|let|var)\s+(\w+)", icons_text))
 
     for path in swift_files():
         text = strip_code(open(path, encoding="utf-8").read())
@@ -179,6 +177,26 @@ def check_symbols():
             if defined_icons and name not in defined_icons:
                 problems.append("%s 引用了未定义的 Icon.%s" % (os.path.relpath(path, ROOT), name))
     return problems
+
+
+def parse_icon_cases(text):
+    """把 enum Icon 顶部所有 `case a, b, c` 行里的名字收集起来。
+
+    注意：不能用"只取第一行"的偷懒写法 —— case 是跨多行声明的，
+    只解析第一行会让这个校验形同虚设（早期版本就踩过这个坑）。
+    """
+    names = set()
+    seen_case = False
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("case "):
+            seen_case = True
+            for part in re.split(r"[,\s]+", stripped[len("case "):]):
+                if part.isidentifier():
+                    names.add(part)
+        elif seen_case:
+            break
+    return names
 
 
 def expected_pixels(size_text, scale_text):
