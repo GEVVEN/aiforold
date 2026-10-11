@@ -199,7 +199,7 @@ extension UIViewController {
 
     func showAlert(title: String?, message: String?, actionTitle: String = L10n.ok) {
         let alert = UIAlertController(title: title, message: message, preferredStyle: .alert)
-        alert.addAction(UIAlertAction(title: actionTitle, style: .default, completion: nil))
+        alert.addAction(UIAlertAction(title: actionTitle, style: .default, handler: nil))
         present(alert, animated: true, completion: nil)
     }
 

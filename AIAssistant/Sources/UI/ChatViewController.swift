@@ -786,7 +786,8 @@ final class ChatViewController: UIViewController {
         navigationController?.pushViewController(settings, animated: true)
     }
 
-    @objc private func openImage(_ attachments: [Attachment], index: Int) {
+    /// 注意：不能加 @objc —— 参数是 Swift 数组 [Attachment]，无法在 Objective-C 里表示
+    private func openImage(_ attachments: [Attachment], index: Int) {
         guard !attachments.isEmpty else { return }
         let viewer = ImageViewerViewController(attachments: attachments, startIndex: index)
         presentFullScreen(viewer)

@@ -23,7 +23,9 @@ final class ChatMessageCell: UITableViewCell {
     private let avatarIcon = UIImageView()
     private let bubbleView = UIView()
     private let contentStack = UIStackView()
-    private let textLabel = UILabel()
+    // 不能命名为 textLabel：UITableViewCell 自带这个属性，同名会被编译器
+    // 判为"用存储属性覆盖父类属性"（cannot override with a stored property）。
+    private let bubbleLabel = UILabel()
     private let typingView = TypingDotsView()
     private let mediaStack = UIStackView()
     private let thumbs: [AttachmentThumbView] = (0..<3).map { _ in AttachmentThumbView() }
@@ -69,7 +71,7 @@ final class ChatMessageCell: UITableViewCell {
         bubbleView.translatesAutoresizingMaskIntoConstraints = false
         contentView.addSubview(bubbleView)
 
-        textLabel.numberOfLines = 0
+        bubbleLabel.numberOfLines = 0
         typingView.isHidden = true
 
         mediaStack.axis = .horizontal
@@ -100,7 +102,7 @@ final class ChatMessageCell: UITableViewCell {
         contentStack.spacing = 8
         contentStack.alignment = .fill
         contentStack.translatesAutoresizingMaskIntoConstraints = false
-        contentStack.addArrangedSubview(textLabel)
+        contentStack.addArrangedSubview(bubbleLabel)
         contentStack.addArrangedSubview(typingView)
         contentStack.addArrangedSubview(mediaStack)
         contentStack.addArrangedSubview(errorRow)
@@ -186,12 +188,12 @@ final class ChatMessageCell: UITableViewCell {
 
         // 文本（流式时纯文本 + 光标，省掉反复排版）
         if hasText || hasReasoning {
-            textLabel.isHidden = false
+            bubbleLabel.isHidden = false
             if streaming {
-                textLabel.attributedText = NSAttributedString(string: message.text + " ▍",
+                bubbleLabel.attributedText = NSAttributedString(string: message.text + " ▍",
                                                               attributes: Self.plainAttributes(style))
             } else if hasReasoning && !hasText {
-                textLabel.attributedText = MarkdownLite.render("思考过程：\n" + (message.reasoningText ?? ""),
+                bubbleLabel.attributedText = MarkdownLite.render("思考过程：\n" + (message.reasoningText ?? ""),
                                                                style: MarkdownStyle.captionStyle(palette))
             } else if hasReasoning {
                 let combined = NSMutableAttributedString()
@@ -199,14 +201,14 @@ final class ChatMessageCell: UITableViewCell {
                                                     style: MarkdownStyle.captionStyle(palette)))
                 combined.append(NSAttributedString(string: "\n\n"))
                 combined.append(MarkdownLite.render(message.text, style: style))
-                textLabel.attributedText = combined
+                bubbleLabel.attributedText = combined
             } else {
-                textLabel.attributedText = MarkdownLite.render(message.text, style: style)
+                bubbleLabel.attributedText = MarkdownLite.render(message.text, style: style)
             }
             plainText = message.text.isEmpty ? (message.reasoningText ?? "") : message.text
         } else {
-            textLabel.attributedText = nil
-            textLabel.isHidden = true
+            bubbleLabel.attributedText = nil
+            bubbleLabel.isHidden = true
             plainText = ""
         }
 
@@ -263,7 +265,7 @@ final class ChatMessageCell: UITableViewCell {
         onRetry = nil
         onSpeak = nil
         message = nil
-        textLabel.attributedText = nil
+        bubbleLabel.attributedText = nil
         errorLabel.text = nil
         errorRow.isHidden = true
         mediaStack.isHidden = true
