@@ -30,6 +30,8 @@ jobs:
         run: |
           xcodebuild -version
           swift --version
+          echo "--- 可用的 scheme / target ---"
+          xcodebuild -list -project AIAssistant.xcodeproj || true
 
       - name: Verify project file matches sources
         run: python3 tools/generate_pbxproj.py --check
@@ -37,25 +39,54 @@ jobs:
       - name: Static self-check (iOS 12 compatibility)
         run: python3 tools/check_ios12.py
 
+      # 关键点：xcodebuild 不允许 -target 与 -derivedDataPath 同时出现
+      # （会报 “在指定 -derivedDataPath 时，必须使用 -scheme …”）。
+      # 所以主路径用共享 scheme；万一 scheme 丢失，自动回退到 -target + CONFIGURATION_BUILD_DIR。
       - name: Build unsigned app
         run: |
           set -o pipefail
-          xcodebuild \
-            -project AIAssistant.xcodeproj \
-            -target AIAssistant \
-            -configuration Release \
-            -sdk iphoneos \
-            -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGN_ENTITLEMENTS="" \
-            build | tee build.log | tail -n 60
+          rm -rf build build.log
+          SIGN_ARGS=(CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" CODE_SIGN_ENTITLEMENTS="")
+
+          echo "=== 尝试 1：-scheme + -derivedDataPath ==="
+          if xcodebuild \
+               -project AIAssistant.xcodeproj \
+               -scheme AIAssistant \
+               -configuration Release \
+               -destination 'generic/platform=iOS' \
+               -derivedDataPath build \
+               "${SIGN_ARGS[@]}" \
+               build > build.log 2>&1; then
+            tail -n 60 build.log
+          else
+            echo "scheme 方式失败，日志末尾："
+            tail -n 60 build.log
+            echo "=== 尝试 2：-target + CONFIGURATION_BUILD_DIR ==="
+            xcodebuild \
+              -project AIAssistant.xcodeproj \
+              -target AIAssistant \
+              -configuration Release \
+              -sdk iphoneos \
+              CONFIGURATION_BUILD_DIR="$PWD/build/Products" \
+              "${SIGN_ARGS[@]}" \
+              build 2>&1 | tee -a build.log | tail -n 60
+          fi
 
       - name: Package into .ipa
         run: |
+          set -euo pipefail
           APP_PATH="build/Build/Products/Release-iphoneos/AIAssistant.app"
-          test -d "$APP_PATH" || { echo "构建产物不存在：$APP_PATH"; exit 1; }
+          if [ ! -d "$APP_PATH" ]; then
+            echo "预期路径不存在，自动搜索 .app …"
+            # 末尾的 || true 是必须的：pipefail 下 find 被 head 提前关管道会返回非零
+            APP_PATH="$(find build -maxdepth 6 -type d -name 'AIAssistant.app' | head -n 1 || true)"
+          fi
+          if [ -z "$APP_PATH" ] || [ ! -d "$APP_PATH" ]; then
+            echo "没有找到构建产物 AIAssistant.app"
+            ls -R build/Build/Products 2>/dev/null || true
+            exit 1
+          fi
+          echo "使用产物：$APP_PATH"
           rm -rf Payload AIAssistant-unsigned.ipa
           mkdir -p Payload
           cp -R "$APP_PATH" Payload/
