@@ -5,6 +5,13 @@ name: Build unsigned IPA
 #
 # 拿到 ipa 之后，Windows 上用 Sideloadly / AltStore 用你自己的 Apple ID 签名安装即可，
 # 详细步骤见 docs/构建与安装.md。
+#
+# 步骤顺序有意为之：
+#   1) python 静态自检（不需要 Xcode，先拦掉低级问题）
+#   2) swiftc -typecheck（真编译器语义检查，不链接不签名，几秒出结果）
+#   3) ibtool 校验启动图
+#   4) 真正出包
+# 2/3 用 continue-on-error，这样即使它们报错也能看到完整诊断，而不是一个笼统的失败。
 
 on:
   workflow_dispatch:
@@ -38,6 +45,40 @@ jobs:
 
       - name: Static self-check (iOS 12 compatibility)
         run: python3 tools/check_ios12.py
+
+      # 关键诊断 1：用真 swiftc 做全量类型检查（不链接、不签名、不需要证书）。
+      # 有语法/类型/可用性问题时，这里会精确到 文件:行。
+      - name: Swift type-check (no link, no signing)
+        continue-on-error: true
+        run: |
+          set +e
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          echo "SDK = $SDK"
+          COUNT="$(find AIAssistant/Sources -name '*.swift' | wc -l | tr -d ' ')"
+          echo "源文件数 = $COUNT"
+          SOURCES="$(find AIAssistant/Sources -name '*.swift' | sort | tr '\n' ' ')"
+          xcrun --sdk iphoneos swiftc \
+            -typecheck \
+            -swift-version 5 \
+            -target arm64-apple-ios12.0 \
+            -sdk "$SDK" \
+            $SOURCES > typecheck.log 2>&1
+          echo "swiftc -typecheck 退出码: $?"
+          echo "--- error 行 ---"
+          grep -E "error:" typecheck.log | head -n 40
+          echo "--- 末尾 5 行 ---"
+          tail -n 5 typecheck.log
+
+      # 关键诊断 2：单独用 ibtool 编译启动图，确认 storyboard 本身没问题。
+      - name: Validate LaunchScreen.storyboard (ibtool)
+        continue-on-error: true
+        run: |
+          set +e
+          xcrun ibtool --errors --warnings --notices \
+            --compile "$RUNNER_TEMP/LaunchScreen.storyboardc" \
+            AIAssistant/LaunchScreen.storyboard > ibtool.log 2>&1
+          echo "ibtool 退出码: $?"
+          cat ibtool.log
 
       # 关键点：xcodebuild 不允许 -target 与 -derivedDataPath 同时出现
       # （会报 “在指定 -derivedDataPath 时，必须使用 -scheme …”）。
@@ -100,10 +141,31 @@ jobs:
           path: AIAssistant-unsigned.ipa
           if-no-files-found: error
 
-      - name: Upload build log on failure
+      - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: build-log
-          path: build.log
+          path: |
+            build.log
+            typecheck.log
+            ibtool.log
           if-no-files-found: ignore
+
+      # 让报错直接出现在 Actions 页面上，不用下载 artifact 才能看到
+      - name: Surface errors
+        if: failure()
+        run: |
+          set +e
+          for f in typecheck.log ibtool.log build.log; do
+            [ -f "$f" ] || continue
+            echo "===================== $f ====================="
+            grep -nE "error:|错误:|does not contain|cannot|Command .* failed" "$f" \
+              | head -n 40 | while IFS= read -r line; do
+                echo "::error::$f: $line"
+                echo "$line"
+              done
+            echo "----- 末尾 80 行 -----"
+            tail -n 80 "$f"
+          done
+          exit 0

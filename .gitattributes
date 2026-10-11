@@ -1,0 +1,4 @@
+﻿# 统一以 LF 存进仓库：GitHub Actions 上的 shell 脚本不能被 CRLF 污染
+* text=auto eol=lf
+*.png binary
+*.ipa binary
