@@ -40,6 +40,8 @@ final class ChatViewController: UIViewController {
     private var isVoicePressActive = false
     private var keyboardOverlap: CGFloat = 0
     private var isNearBottom = true
+    /// 自己维护"正在批量更新"的状态：不依赖 UITableView 上不保证公开的 isUpdating
+    private var isBatchUpdatingTable = false
 
     // MARK: - 初始化
 
@@ -378,7 +380,7 @@ final class ChatViewController: UIViewController {
 
         // 正在输出的 cell 不在屏幕上：整行刷新一次就够（此时用户没在看它）
         guard let cell = tableView.cellForRow(at: indexPath) as? ChatMessageCell else {
-            if !tableView.isUpdating {
+            if !isBatchUpdatingTable {
                 tableView.reloadRows(at: [indexPath], with: .none)
             }
             if isNearBottom { scrollToBottom(animated: false) }
@@ -390,11 +392,13 @@ final class ChatViewController: UIViewController {
         // 让自适应高度重新计算。每次刷新都必须量一次，
         // 否则气泡高度会落后于文字，出现"文字被裁掉"的观感；
         // 代价用更稀的刷新频率（低配模式 0.25s）来平衡。
-        if !tableView.isUpdating {
+        if !isBatchUpdatingTable {
+            isBatchUpdatingTable = true
             UIView.performWithoutAnimation {
                 tableView.beginUpdates()
                 tableView.endUpdates()
             }
+            isBatchUpdatingTable = false
         }
         if isNearBottom { scrollToBottom(animated: false) }
     }
