@@ -1,0 +1,20 @@
+# Xcode
+build/
+DerivedData/
+*.xcuserstate
+xcuserdata/
+*.xcscmblueprint
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+build.log
+Payload/
+
+# macOS
+.DS_Store
+
+# 本地产物
+__pycache__/
+*.pyc
